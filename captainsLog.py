@@ -1,41 +1,151 @@
 import json
 import os.path
+import re
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox, filedialog
-from typing import Union
+from typing import Union, Dict
+
+
+class EntryIter:
+    def __init__(self, e: 'Entry'):
+        self.cur = e
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> 'Entry':
+        if self.cur is None:
+            raise StopIteration
+
+        out = self.cur
+        self.cur = self.cur.nextEntry
+        return out
 
 
 class Entry:
     ID_GEN = 0
 
-    def __init__(self, name: str = '', log='', children=None, date=''):
+    def __init__(self, name: str = '', log='', children=None, date='', parent=None):
         self.name = name
         self.log = log
-        self.children = []
+        self.childRoot: Union['Entry', None] = None
+        self.childEnd: Union['Entry', None] = None
 
-        self.logID = Entry.ID_GEN
+        self.numChildren = 0
+
+        self.parent: 'Entry' = parent
+        self.date = date
+
+        self.logID: int = Entry.ID_GEN
+        # print(f'Gen: {self.logID}, {self.name}')
         Entry.ID_GEN += 1
 
         if children is not None:
             for c in children:
-                self.children.append(Entry(**c))
+                self.addChild(Entry(**c))
 
-        self.date = date
+        self.prevEntry: Union['Entry', None] = None
+        self.nextEntry: Union['Entry', None] = None
+        self.idx = 0
 
     def toDict(self):
         return {
             'name': self.name,
             'log': self.log,
-            'children': [x.toDict() for x in self.children],
+            'children': [x.toDict() for x in self],
             'date': self.date
         }
 
-    def getMangle(self) -> str:
-        return f'{self.logID}_{self.name}'
+    def __iter__(self):
+        return EntryIter(self.childRoot)
 
-    def addChild(self, e):
-        self.children.append(e)
+    def getMangle(self) -> str:
+        return f'{self.logID}_'
+
+    def addChild(self, e: 'Entry'):
+        if self.childRoot is None:
+            self.childRoot = e
+            self.childEnd = e
+        else:
+            self.childEnd.nextEntry = e
+            e.prevEntry = self.childEnd
+            self.childEnd = e
+
+        e.idx = self.numChildren
+        self.numChildren += 1
+        e.parent = self
+
+    def unlink(self):
+        self.prevEntry.nextEntry = self.nextEntry
+        self.nextEntry.prevEntry = self.prevEntry
+        self.parent.numChildren -= 1
+
+        cur = self.nextEntry
+        while cur is not None:
+            cur.idx -= 1
+            cur = cur.nextEntry
+
+    def moveLeft(self):
+        if self.prevEntry is None:
+            return
+
+        oldPrev = self.prevEntry
+        oldNext = self.nextEntry
+
+        self.prevEntry = oldPrev.prevEntry
+        self.nextEntry = oldPrev
+
+        oldPrev.prevEntry = self
+        oldPrev.nextEntry = oldNext
+
+        if oldNext is not None:
+            oldNext.prevEntry = oldPrev
+        else:
+            self.parent.childEnd = oldPrev
+
+        if self.prevEntry is None:
+            self.parent.childRoot = self
+
+        self.idx -= 1
+        oldPrev.idx += 1
+
+    def moveRight(self):
+        if self.nextEntry is None:
+            return
+
+        oldPrev = self.prevEntry
+        oldNext = self.nextEntry
+
+        self.prevEntry = oldNext
+        self.nextEntry = oldNext.nextEntry
+
+        oldNext.prevEntry = oldPrev
+        oldNext.nextEntry = self
+
+        if oldPrev is not None:
+            oldPrev.nextEntry = oldNext
+        else:
+            self.parent.childRoot = oldNext
+
+        if self.nextEntry is None:
+            self.parent.childEnd = self
+
+        self.idx += 1
+        oldNext.idx -= 1
+
+    def moveTo(self, idx: int):
+        if idx == self.idx:
+            return
+
+        while self.idx < idx and self.nextEntry is not None:
+            self.moveRight()
+
+        while self.idx > idx and self.prevEntry is not None:
+            self.moveLeft()
+
+    def __str__(self):
+        return f'ID:{self.logID} #{self.idx} {self.name}'
 
 
 class TreeManager:
@@ -46,25 +156,70 @@ class TreeManager:
 
         self.root = root
 
-        self.nodes = {root.getMangle(): root}
+        self.nodes: Dict[str, Entry] = {root.getMangle(): root}
 
         self.loadTree('', self.root)
+        self.updateSubLogCounts()
 
     def loadTree(self, parent: str, e: Entry):
         self.insertNode(parent, e)
 
-        if len(e.children) > 0:
-            for x in e.children:
+        if e.numChildren > 0:
+            for x in e:
                 self.loadTree(e.getMangle(), x)
 
-
     def insertNode(self, parent: str, e: Entry, select=False):
-        x = self.tree.insert(parent, 'end', e.getMangle(), text=e.name, values=[len(e.children)])
+        # print(f'P: {parent}, E:{e}')
+
+        x = self.tree.insert(parent, 'end', e.getMangle(), text=e.name, values=[0])
         self.nodes[e.getMangle()] = e
 
         if select:
             self.tree.see(x)
 
+    def insertNewNode(self, parent: str):
+        e = Entry('New Log')
+        self.insertNode(parent, e, True)
+
+        if len(parent) > 0:
+            self.nodes[parent].addChild(e)
+
+        self.updateSubLogCounts()
+
+    def setName(self, eid: str, name: str):
+        e = self.nodes[eid]
+        e.name = name
+
+        self.tree.item(eid, text=name)
+
+    def setNum(self, eid: str, num: int) -> int:
+        e = self.nodes[eid]
+        e.moveTo(num)
+
+        self.tree.move(eid, e.parent.getMangle(), e.idx)
+
+        return e.idx
+
+    def select(self, eid: int):
+        self.tree.item(f'{eid}_', open=True)
+
+    def remove(self, eid: str):
+        self.tree.delete(eid)
+        e = self.nodes.pop(eid)
+        e.unlink()
+        self.updateSubLogCounts()
+
+    def updateSubLogCounts(self):
+        e = self.nodes[ROOT_ID]
+        self.updateSubLogCountForItem(e)
+
+    def updateSubLogCountForItem(self, e: Entry) -> int:
+        s = 0
+        for c in e:
+            s += 1 + self.updateSubLogCountForItem(c)
+
+        self.tree.item(e.getMangle(), values=[s])
+        return s
 
 
 class CancelAction(Exception):
@@ -100,7 +255,17 @@ def stripFN(filename) -> str:
     return filename
 
 
-class CaptainsLog(tk.Frame):
+INT_RE = re.compile(r'-?\d*')
+
+
+def _intValidate(i: str) -> bool:
+    return INT_RE.fullmatch(i) is not None
+
+
+ROOT_ID = '0_'
+
+
+class CaptainsLog(tk.LabelFrame):
 
     def __init__(self, root: tk.Tk):
         super().__init__(root)
@@ -108,61 +273,101 @@ class CaptainsLog(tk.Frame):
         self.treeMan: Union[None, TreeManager] = None
 
         self.needToSave = False
+        self.ignoreTrace = False
         self.curLogFilename = ''
+        self.curEntry: Union[None, Entry] = None
 
         self.root = root
         self.root.title("Captain's Log")
         self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
         root.option_add('*tearOff', False)
 
+        self['text'] = 'MAIN'
+
         self.grid(row=0, column=0, sticky='nesw')
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=0)
+        self.rowconfigure(1, weight=1)
 
-        # upperFrame = tk.LabelFrame(self, text='asdf')
-        upperFrame = tk.Frame(self)
-        upperFrame.grid(row=0, column=0, sticky='ewn', columnspan=2)
+        upperFrame = tk.LabelFrame(self, text='Upper')
+        # upperFrame = tk.Frame(self)
+        upperFrame.grid(row=0, column=0, sticky='sewn')
         for x in range(2):
             upperFrame.columnconfigure(x, weight=1)
 
+        upperFrame.rowconfigure(0, weight=1)
+
+        buttonFrame = tk.LabelFrame(upperFrame, text='Btn')
+        buttonFrame.grid(row=0, column=0, sticky='nwe')
+
+        tk.Button(buttonFrame, text="Add New Entry", command=self.addNewEntryAtEnd).grid(row=0, column=0, sticky='nw')
+        tk.Button(buttonFrame, text='Remove Selected', command=self.removeSelectedEntry).grid(row=0, column=1,
+                                                                                              sticky='nw')
+
+        lowerFrame = tk.LabelFrame(self, text='lower')
+        lowerFrame.grid(row=1, column=0, sticky='nesw')
+
+        lowerFrame.columnconfigure(1, weight=1)
+        lowerFrame.rowconfigure(0, weight=1)
+
         # Tree Frame
-        treeFrame = tk.Frame(self)
-        treeFrame.grid(row=1, column=0, sticky='nesw')
+        treeFrame = tk.LabelFrame(lowerFrame, text='')
+        treeFrame.grid(row=0, column=0, sticky='nesw')
 
-        treeFrame.rowconfigure(1, weight=1)
-
-        treeButtonFrame = tk.Frame(upperFrame)
-        treeButtonFrame.grid(row=0, column=0, sticky='new')
-
-        tk.Button(upperFrame, text="Add New Entry", command=self.addNewEntryAtEnd).grid(row=0, column=0, sticky='nw')
+        treeFrame.rowconfigure(0, weight=1)
 
         self.tree = ttk.Treeview(treeFrame, selectmode='browse', columns=('sublogs',))
         self.tree.column('sublogs', width=100)
         self.tree.heading('sublogs', text='Sub-Logs')
-        self.tree.grid(row=1, column=0, sticky='news')
+        self.tree.grid(row=0, column=0, sticky='news')
 
-        self.tree.bind('<<TreeviewSelect>>', lambda e: self.selectEntry())
+        self.tree.bind('<<TreeviewSelect>>', lambda e: self.openSelectedEntry())
 
+        treeScroll = tk.Scrollbar(treeFrame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=treeScroll.set)
+        treeScroll.grid(row=0, column=1, sticky='nes')
         # Text Frame
 
-        textFrame = tk.Frame(self)
-        textFrame.grid(row=1, column=1)
+        textFrame = tk.LabelFrame(lowerFrame, text='Log Entry')
+        textFrame.grid(row=0, column=1, sticky='nesw')
+        textFrame.rowconfigure(1, weight=1)
+        textFrame.columnconfigure(0, weight=1)
 
-        entryDataFrame = tk.Frame(upperFrame)
-        entryDataFrame.grid(row=0, column=1, sticky='new')
+        entryDataFrame = tk.LabelFrame(textFrame, text='Data')
+        entryDataFrame.grid(row=0, column=0, sticky='new')
 
-        entryDataFrame.columnconfigure(1, weight=1)
+        entryDataFrame.columnconfigure(3, weight=1)
+
+        self.entryIdxVar = tk.IntVar()
+        tk.Label(entryDataFrame, text='#').grid(row=0, column=0, sticky='nw')
+
+        v = self.register(_intValidate)
+
+        self.numSpinbox = tk.Spinbox(entryDataFrame, textvariable=self.entryIdxVar, increment=-1, from_=1, to=100,
+                                     width=5,
+                                     validatecommand=(v, '%P'))
+
+        self.numSpinbox.grid(row=0, column=1)
+
+        self.entryIdxVar.trace_add('write', self.modifiedNum)
 
         self.entryNameVar = tk.StringVar()
-        tk.Label(entryDataFrame, text='Name:').grid(row=0, column=0, sticky='nw')
-        tk.Entry(entryDataFrame, textvariable=self.entryNameVar).grid(row=0, column=1, sticky='nwe')
+        tk.Label(entryDataFrame, text='Name:').grid(row=0, column=2, sticky='nw')
+        nameEntry = tk.Entry(entryDataFrame, textvariable=self.entryNameVar)
+        nameEntry.grid(row=0, column=3, sticky='nwe')
+        self.entryNameVar.trace_add('write', self.modifiedName)
 
         self.textArea = tk.Text(textFrame)
         self.textArea.grid(row=1, column=0, sticky='nesw')
+        self.textArea.bind('<<Modified>>', lambda e: self.modifiedText())
+
+        textScroll = tk.Scrollbar(textFrame, orient=tk.VERTICAL, command=self.textArea.yview)
+        self.textArea.configure(yscrollcommand=textScroll.set)
+        textScroll.grid(row=1, column=1, sticky='nes')
 
         # Menu
 
@@ -174,6 +379,7 @@ class CaptainsLog(tk.Frame):
         fileMenu.add_command(label='New Log', command=self.newLogFile)
         fileMenu.add_separator()
         fileMenu.add_command(label='Save Log', command=self.saveLogFileMenuCmd)
+        # TODO save as
         fileMenu.add_separator()
         fileMenu.add_command(label='Load Log', command=self.selectLogFile)
 
@@ -206,6 +412,8 @@ class CaptainsLog(tk.Frame):
 
         self.needToSave = True
 
+        self.resetEntryFields()
+
     @destructive
     def selectLogFile(self):
         ret = askOpen()
@@ -219,8 +427,23 @@ class CaptainsLog(tk.Frame):
             logs = json.load(f)
 
         self.treeMan = TreeManager(self.tree, Entry(**logs))
+        self.treeMan.select(0)
 
         self.needToSave = False
+
+        self.resetEntryFields()
+
+    def resetEntryFields(self):
+        init = self.ignoreTrace
+        self.ignoreTrace = True
+
+        self.entryIdxVar.set(1)
+        self.entryNameVar.set('')
+
+        self.textArea.delete('0.0', 'end')
+
+        self.update()
+        self.ignoreTrace = init
 
     def saveLogFileMenuCmd(self):
         try:
@@ -242,20 +465,112 @@ class CaptainsLog(tk.Frame):
 
         self.needToSave = False
 
+        self.ignoreTrace = True
+        self.textArea.edit_modified(False)
+        self.update()
+        self.ignoreTrace = False
+
+    def getSel(self):
+        s = self.tree.selection()
+        if len(s) == 0:
+            return None
+
+        return s[0]
+
+    def getEntry(self, s) -> Entry:
+        return self.treeMan.nodes[s]
+
     def addNewEntryAtEnd(self):
-        s = self.tree.selection()
-        if len(s) == 0:
+        s = self.getSel()
+        if s is not None:
+            self.treeMan.insertNewNode(s)
+
+    def openSelectedEntry(self):
+        s = self.getSel()
+
+        if s is not None:
+            e = self.treeMan.nodes[s]
+
+            self.ignoreTrace = True
+
+            if self.curEntry is not None:
+                self.curEntry.log = self.textArea.get('0.0', 'end').rstrip()
+
+            self.textArea.delete('0.0', 'end')
+            self.curEntry = e
+
+            self.entryNameVar.set(e.name)
+            self.entryIdxVar.set(e.idx + 1)
+
+            # TODO load formatting tags?
+            self.textArea.insert('0.0', e.log)
+            self.textArea.edit_modified(False)
+
+            if s == ROOT_ID:
+                self.numSpinbox['state'] = 'disabled'
+            else:
+                self.numSpinbox['state'] = 'normal'
+
+            self.update_idletasks()
+            self.update()
+            self.ignoreTrace = False
+
+    def removeSelectedEntry(self):
+        s = self.getSel()
+
+        if s is not None:
+            if s == ROOT_ID:
+                messagebox.showinfo('Invalid', 'Cannot Remove Initial Log')
+                return
+
+            e = self.treeMan.nodes[s]
+            ret = messagebox.askyesno('Delete Entry?',
+                                      f'Are you sure you want to remove entry: "{e.name}" and all it\'s sub-logs?')
+
+            if not ret:
+                return
+
+            self.treeMan.remove(s)
+
+            self.resetEntryFields()
+
+            self.needToSave = True
+
+    def modifiedText(self):
+        if self.ignoreTrace:
             return
 
-        self.treeMan.insertNode(s[0], Entry('New Log'), select=True)
+        if self.curEntry is not None:
+            self.needToSave = True
 
-    def selectEntry(self):
-        s = self.tree.selection()
-        if len(s) == 0:
+
+    def modifiedName(self, _a, _b, _c):
+        if self.ignoreTrace:
             return
 
-        e = self.treeMan.nodes[s[0]]
-        self.entryNameVar.set(e.name)
+        s = self.getSel()
+        if s is not None:
+            self.treeMan.setName(s, self.entryNameVar.get())
+            self.needToSave = True
+
+    def modifiedNum(self, _a, _b, _c):
+        if self.ignoreTrace:
+            return
+
+        s = self.getSel()
+        if s is not None:
+            if s == ROOT_ID:
+                return
+
+            try:
+                x = self.entryIdxVar.get() - 1
+            except tk.TclError:
+                return
+
+            newnum = self.treeMan.setNum(s, x)
+            self.ignoreTrace = True
+            self.entryIdxVar.set(newnum + 1)
+            self.ignoreTrace = False
 
 
 def main():
