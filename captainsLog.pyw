@@ -1,11 +1,12 @@
 import json
 import os.path
 import re
+import sys
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox, filedialog
 from typing import Union, Dict
-
+from argparse import ArgumentParser
 
 class EntryIter:
     def __init__(self, e: 'Entry'):
@@ -267,7 +268,7 @@ ROOT_ID = '0_'
 
 class CaptainsLog(tk.LabelFrame):
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, startingFile: Union[str, None] = None):
         super().__init__(root)
 
         self.treeMan: Union[None, TreeManager] = None
@@ -383,6 +384,10 @@ class CaptainsLog(tk.LabelFrame):
         fileMenu.add_separator()
         fileMenu.add_command(label='Load Log', command=self.selectLogFile)
 
+        if startingFile is not None:
+            self.loadLogFile(startingFile)
+
+
     @destructive
     def closeWindow(self):
         self.root.destroy()
@@ -421,7 +426,10 @@ class CaptainsLog(tk.LabelFrame):
         if ret is None or len(ret) == 0:
             return
 
-        self.curLogFilename = ret
+        self.loadLogFile(ret)
+
+    def loadLogFile(self, filename):
+        self.curLogFilename = filename
 
         with open(self.curLogFilename, mode='r') as f:
             logs = json.load(f)
@@ -432,6 +440,7 @@ class CaptainsLog(tk.LabelFrame):
         self.needToSave = False
 
         self.resetEntryFields()
+
 
     def resetEntryFields(self):
         init = self.ignoreTrace
@@ -574,8 +583,13 @@ class CaptainsLog(tk.LabelFrame):
 
 
 def main():
+    if len(sys.argv) < 2:
+        f = None
+    else:
+        f = sys.argv[1]
+
     x = tk.Tk()
-    gui = CaptainsLog(x)
+    gui = CaptainsLog(x, f)
     gui.mainloop()
 
 
