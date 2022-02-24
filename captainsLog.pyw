@@ -1,12 +1,13 @@
+import configparser
 import json
 import os.path
 import re
 import sys
-import tkinter as tk
 from tkinter import ttk
+import tkinter as tk
 from tkinter import messagebox, filedialog
 from typing import Union, Dict
-from argparse import ArgumentParser
+from configparser import ConfigParser
 
 
 class EntryIter:
@@ -272,9 +273,10 @@ END = 'mend'
 LIMIT = 'limit'
 
 
-class CaptainsLog(tk.LabelFrame):
 
-    def __init__(self, root: tk.Tk, startingFile: Union[str, None] = None):
+class CaptainsLog(ttk.Frame):
+
+    def __init__(self, root: tk.Tk, config: ConfigParser, startingFile: Union[str, None] = None):
         super().__init__(root)
 
         self.treeMan: Union[None, TreeManager] = None
@@ -284,94 +286,138 @@ class CaptainsLog(tk.LabelFrame):
         self.curLogFilename = ''
         self.curEntry: Union[None, Entry] = None
 
+        # Style
+        #region
+
+        colors = config['Colors']
+
+        def getColor(key) -> str:
+            return f'#{colors[key]}'
+
+        BG = getColor('BG')
+        SELECT = getColor('Select')
+
+
+        style = ttk.Style()
+        style.theme_use('clam')
+
+        style.configure('CLFrame.TFrame', background=BG)
+
+        style.configure('CLTree.Treeview', background=[('selected', SELECT)],
+                        foreground=BG, fieldbackground=BG)
+        style.configure('CLTree.Treeview.Heading', background=BG)
+        #style.configure('CLTree.Treeview.Item', foreground=BG)
+        style.configure('CLTree.Treeview.Cell')
+        #endregion
+
+        # ROOT
+        # region
         self.root = root
         self.root.title("Captain's Log")
         self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
         root.option_add('*tearOff', False)
 
-        # self['text'] = 'MAIN'
-
         self.grid(row=0, column=0, sticky='nesw')
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+        # endregion
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=0)
         self.rowconfigure(1, weight=1)
 
-        # upperFrame = tk.LabelFrame(self, text='Upper')
-        upperFrame = tk.Frame(self)
+        self['style'] = 'CLFrame.TFrame'
+
+        # Upper Frame setup
+        # region
+        # upperFrame = ttk.LabelFrame(self, text='Upper')
+        upperFrame = ttk.Frame(self, style='CLFrame.TFrame')
         upperFrame.grid(row=0, column=0, sticky='sewn')
         for x in range(2):
             upperFrame.columnconfigure(x, weight=1)
 
         upperFrame.rowconfigure(0, weight=1)
 
-        # buttonFrame = tk.LabelFrame(upperFrame, text='Btn')
-        buttonFrame = tk.Frame(upperFrame)
+        # endregion
+
+        # Button Frame
+        # region
+        # buttonFrame = ttk.LabelFrame(upperFrame, text='Btn')
+        buttonFrame = ttk.Frame(upperFrame, style='CLFrame.TFrame')
         buttonFrame.grid(row=0, column=0, sticky='nwe')
 
-        tk.Button(buttonFrame, text="Add New Entry", command=self.addNewEntryAtEnd).grid(row=0, column=0, sticky='nw')
-        tk.Button(buttonFrame, text='Remove Selected', command=self.removeSelectedEntry).grid(row=0, column=1,
-                                                                                              sticky='nw')
+        ttk.Button(buttonFrame, text="Add New Entry", command=self.addNewEntryAtEnd).grid(row=0, column=0, sticky='nw')
+        ttk.Button(buttonFrame, text='Remove Selected', command=self.removeSelectedEntry).grid(row=0, column=1,
+                                                                                               sticky='nw')
+        # endregion
 
-        # lowerFrame = tk.LabelFrame(self, text='lower')
-        lowerFrame = tk.Frame(self)
+        # Lower Frame setup
+        # region
+        # lowerFrame = ttk.LabelFrame(self, text='lower')
+        lowerFrame = ttk.Frame(self, style='CLFrame.TFrame')
         lowerFrame.grid(row=1, column=0, sticky='nesw')
 
         lowerFrame.columnconfigure(1, weight=1)
         lowerFrame.rowconfigure(0, weight=1)
+        # endregion
 
         # Tree Frame
-        # treeFrame = tk.LabelFrame(lowerFrame, text='')
-        treeFrame = tk.Frame(lowerFrame)
+        # region
+        # treeFrame = ttk.LabelFrame(lowerFrame, text='')
+        treeFrame = ttk.Frame(lowerFrame, style='CLFrame.TFrame')
         treeFrame.grid(row=0, column=0, sticky='nesw')
 
         treeFrame.rowconfigure(0, weight=1)
 
-        self.tree = ttk.Treeview(treeFrame, selectmode='browse', columns=('sublogs',))
+        self.tree = ttk.Treeview(treeFrame, selectmode='browse', columns=('sublogs',),
+                                 style='CLTree.Treeview')
         self.tree.column('sublogs', width=100)
+        self.tree.heading('#0', text='Name')
         self.tree.heading('sublogs', text='Sub-Logs')
         self.tree.grid(row=0, column=0, sticky='news')
 
         self.tree.bind('<<TreeviewSelect>>', lambda e: self.openSelectedEntry())
 
-        treeScroll = tk.Scrollbar(treeFrame, orient=tk.VERTICAL, command=self.tree.yview)
+        treeScroll = ttk.Scrollbar(treeFrame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=treeScroll.set)
         treeScroll.grid(row=0, column=1, sticky='nes')
-        # Text Frame
+        # endregion
 
-        textFrame = tk.LabelFrame(lowerFrame, text='Log Entry')
+        # Text Frame
+        # region
+        textFrame = ttk.LabelFrame(lowerFrame, text='Log Entry')
         textFrame.grid(row=0, column=1, sticky='nesw')
         textFrame.rowconfigure(1, weight=1)
         textFrame.columnconfigure(0, weight=1)
 
-        entryDataFrame = tk.LabelFrame(textFrame, text='Data')
+        entryDataFrame = ttk.LabelFrame(textFrame, text='Data')
         entryDataFrame.grid(row=0, column=0, sticky='new')
 
         entryDataFrame.columnconfigure(3, weight=1)
 
         self.entryIdxVar = tk.IntVar()
-        tk.Label(entryDataFrame, text='#').grid(row=0, column=0, sticky='nw')
+        ttk.Label(entryDataFrame, text='#').grid(row=0, column=0, sticky='nw')
 
         v = self.register(_intValidate)
 
-        self.numSpinbox = tk.Spinbox(entryDataFrame, textvariable=self.entryIdxVar, increment=-1, from_=1, to=100,
-                                     width=5,
-                                     validatecommand=(v, '%P'))
+        self.numSpinbox = ttk.Spinbox(entryDataFrame, textvariable=self.entryIdxVar, increment=-1, from_=1, to=100,
+                                      width=5,
+                                      validatecommand=(v, '%P'))
 
         self.numSpinbox.grid(row=0, column=1)
 
         self.entryIdxVar.trace_add('write', self.modifiedNum)
 
         self.entryNameVar = tk.StringVar()
-        tk.Label(entryDataFrame, text='Name:').grid(row=0, column=2, sticky='nw')
-        nameEntry = tk.Entry(entryDataFrame, textvariable=self.entryNameVar)
+        ttk.Label(entryDataFrame, text='Name:').grid(row=0, column=2, sticky='nw')
+        nameEntry = ttk.Entry(entryDataFrame, textvariable=self.entryNameVar)
         nameEntry.grid(row=0, column=3, sticky='nwe')
         self.entryNameVar.trace_add('write', self.modifiedName)
+        # endregion
 
         # ENTRY AREA
+        # region
         self.textArea = tk.Text(textFrame, wrap='word')
         self.textArea['state'] = 'disabled'
         self.textArea.grid(row=1, column=0, sticky='nesw')
@@ -383,12 +429,13 @@ class CaptainsLog(tk.LabelFrame):
         self.textArea.bind('<Control-KeyRelease-BackSpace->', lambda e: self.deleteWord(), add=False)
         self.root.bind('<Control-KeyRelease-s>', lambda e: self.saveLogFileMenuCmd(), add=False)
 
-        textScroll = tk.Scrollbar(textFrame, orient=tk.VERTICAL, command=self.textArea.yview)
+        textScroll = ttk.Scrollbar(textFrame, orient=tk.VERTICAL, command=self.textArea.yview)
         self.textArea.configure(yscrollcommand=textScroll.set)
         textScroll.grid(row=1, column=1, sticky='nes')
+        # endregion
 
         # Menu
-
+        # region
         menu = tk.Menu(root)
         root['menu'] = menu
 
@@ -400,7 +447,7 @@ class CaptainsLog(tk.LabelFrame):
         # TODO save as
         fileMenu.add_separator()
         fileMenu.add_command(label='Load Log', command=self.selectLogFile)
-
+        # endregion
         if startingFile is not None:
             self.loadLogFile(startingFile)
 
@@ -425,6 +472,8 @@ class CaptainsLog(tk.LabelFrame):
         if ret is None or len(ret) == 0:
             return
 
+        Entry.ID_GEN = 0
+
         self.curLogFilename = ret
 
         filename = stripFN(ret)
@@ -446,6 +495,8 @@ class CaptainsLog(tk.LabelFrame):
 
     def loadLogFile(self, filename):
         self.curLogFilename = filename
+
+        Entry.ID_GEN = 0
 
         with open(self.curLogFilename, mode='r') as f:
             x = f.read(1)
@@ -494,7 +545,6 @@ class CaptainsLog(tk.LabelFrame):
 
         with open(self.curLogFilename, mode='w') as f:
             json.dump(self.treeMan.root.toDict(), f)
-
 
         self.ignoreTrace = True
         self.textArea.edit_modified(False)
@@ -546,7 +596,6 @@ class CaptainsLog(tk.LabelFrame):
 
             self.textArea.insert('1.0', e.log)
             self.textArea.edit_modified(False)
-
 
             self.highlighter()
 
@@ -673,7 +722,11 @@ def main():
         f = sys.argv[1]
 
     x = tk.Tk()
-    gui = CaptainsLog(x, f)
+
+    config = ConfigParser()
+    config.read(r'config/system.cfg')
+
+    gui = CaptainsLog(x, config, f)
     gui.mainloop()
 
 
