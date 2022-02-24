@@ -371,17 +371,17 @@ class CaptainsLog(tk.LabelFrame):
         nameEntry.grid(row=0, column=3, sticky='nwe')
         self.entryNameVar.trace_add('write', self.modifiedName)
 
-        self.textArea = tk.Text(textFrame)
-        # TODO uncomment
-        # self.textArea['state'] = 'disabled'
+        # ENTRY AREA
+        self.textArea = tk.Text(textFrame, wrap='word')
+        self.textArea['state'] = 'disabled'
         self.textArea.grid(row=1, column=0, sticky='nesw')
-        #self.textArea.bind('<<Modified>>', lambda e: self.modifiedText())
+        # self.textArea.bind('<<Modified>>', lambda e: self.modifiedText())
 
         self.textArea.tag_configure(HL_TAG, font='Arial 12 bold')
 
-        # self.textArea.bind('<Key>', self.modifiedText)
-        self.root.bind('<Any-KeyRelease>', func=self.modifiedText, add=True)
+        self.root.bind('<KeyRelease>', func=self.modifiedText, add=True)
         self.textArea.bind('<Control-KeyRelease-BackSpace->', lambda e: self.deleteWord(), add=False)
+        self.root.bind('<Control-KeyRelease-s>', lambda e: self.saveLogFileMenuCmd(), add=False)
 
         textScroll = tk.Scrollbar(textFrame, orient=tk.VERTICAL, command=self.textArea.yview)
         self.textArea.configure(yscrollcommand=textScroll.set)
@@ -448,9 +448,15 @@ class CaptainsLog(tk.LabelFrame):
         self.curLogFilename = filename
 
         with open(self.curLogFilename, mode='r') as f:
-            logs = json.load(f)
+            x = f.read(1)
+            f.seek(0, 0)
+            if len(x) == 0:
+                name = stripFN(filename)
+                self.treeMan = TreeManager(self.tree, Entry(name))
+            else:
+                logs = json.load(f)
+                self.treeMan = TreeManager(self.tree, Entry(**logs))
 
-        self.treeMan = TreeManager(self.tree, Entry(**logs))
         self.treeMan.select(0)
 
         self.needToSave = False
@@ -476,6 +482,8 @@ class CaptainsLog(tk.LabelFrame):
             pass
 
     def saveLogFile(self):
+        self.storeCurrentEntry()
+
         if self.curLogFilename is None or len(self.curLogFilename) == 0:
             ret = askSave()
 
@@ -487,12 +495,12 @@ class CaptainsLog(tk.LabelFrame):
         with open(self.curLogFilename, mode='w') as f:
             json.dump(self.treeMan.root.toDict(), f)
 
-        self.needToSave = False
 
         self.ignoreTrace = True
         self.textArea.edit_modified(False)
         self.update()
         self.ignoreTrace = False
+        self.needToSave = False
 
     def getSel(self):
         s = self.tree.selection()
@@ -506,19 +514,27 @@ class CaptainsLog(tk.LabelFrame):
 
     def addNewEntryAtEnd(self):
         s = self.getSel()
-        if s is not None:
+        if self.treeMan is not None and s is not None:
             self.treeMan.insertNewNode(s)
+
+            self.treeMan.updateSubLogCounts()
+        elif self.treeMan is None:
+            self.treeMan = TreeManager(self.tree, Entry('New Log'))
+
+        self.needToSave = True
+
+    def storeCurrentEntry(self):
+        if self.curEntry is not None:
+            self.curEntry.log = self.textArea.get('0.0', 'end').rstrip()
 
     def openSelectedEntry(self):
         s = self.getSel()
 
         if s is not None:
             e = self.treeMan.nodes[s]
-
             self.ignoreTrace = True
 
-            if self.curEntry is not None:
-                self.curEntry.log = self.textArea.get('0.0', 'end').rstrip()
+            self.storeCurrentEntry()
 
             self.textArea.delete('0.0', 'end')
             self.curEntry = e
@@ -526,10 +542,13 @@ class CaptainsLog(tk.LabelFrame):
             self.entryNameVar.set(e.name)
             self.entryIdxVar.set(e.idx + 1)
 
-            # TODO load formatting tags?
-            self.textArea.insert('0.0', e.log)
-            self.textArea.edit_modified(False)
             self.textArea['state'] = 'normal'
+
+            self.textArea.insert('1.0', e.log)
+            self.textArea.edit_modified(False)
+
+
+            self.highlighter()
 
             if s == ROOT_ID:
                 self.numSpinbox['state'] = 'disabled'
@@ -565,12 +584,15 @@ class CaptainsLog(tk.LabelFrame):
         index = self.textArea.index('insert - 1c wordstart')
         self.textArea.delete(index, 'insert')
 
-
     def modifiedText(self, event: tk.Event):
         if self.ignoreTrace:
             return
 
         if self.textArea['state'] == 'disabled':
+            return
+
+        # Ignore the control key
+        if event.keycode == 17:
             return
 
         # print(event)
@@ -579,8 +601,8 @@ class CaptainsLog(tk.LabelFrame):
 
         self.highlighter()
         # print(event)
-        #if event.char == '\r':
-            #self.indentNewLine()
+        # if event.char == '\r':
+        # self.indentNewLine()
 
         if self.curEntry is not None:
             self.needToSave = True
@@ -619,6 +641,8 @@ class CaptainsLog(tk.LabelFrame):
         self.textArea.mark_set(END, '0.0')
         self.textArea.mark_set(LIMIT, 'end')
 
+        self.textArea.tag_remove(HL_TAG, '0.0', 'end')
+
         sizeVar = tk.IntVar()
         while True:
             index = self.textArea.search('#', END, LIMIT, count=sizeVar, regexp=False)
@@ -640,7 +664,6 @@ class CaptainsLog(tk.LabelFrame):
 
         print(newline)
         print(prevline)
-
 
 
 def main():
