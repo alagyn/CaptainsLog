@@ -8,6 +8,7 @@ from tkinter import messagebox, filedialog
 from typing import Union, Dict
 from argparse import ArgumentParser
 
+
 class EntryIter:
     def __init__(self, e: 'Entry'):
         self.cur = e
@@ -264,6 +265,11 @@ def _intValidate(i: str) -> bool:
 
 
 ROOT_ID = '0_'
+HL_TAG = 'highlight'
+
+START = 'start'
+END = 'mend'
+LIMIT = 'limit'
 
 
 class CaptainsLog(tk.LabelFrame):
@@ -283,7 +289,7 @@ class CaptainsLog(tk.LabelFrame):
         self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
         root.option_add('*tearOff', False)
 
-        self['text'] = 'MAIN'
+        # self['text'] = 'MAIN'
 
         self.grid(row=0, column=0, sticky='nesw')
 
@@ -294,29 +300,32 @@ class CaptainsLog(tk.LabelFrame):
         self.rowconfigure(0, weight=0)
         self.rowconfigure(1, weight=1)
 
-        upperFrame = tk.LabelFrame(self, text='Upper')
-        # upperFrame = tk.Frame(self)
+        # upperFrame = tk.LabelFrame(self, text='Upper')
+        upperFrame = tk.Frame(self)
         upperFrame.grid(row=0, column=0, sticky='sewn')
         for x in range(2):
             upperFrame.columnconfigure(x, weight=1)
 
         upperFrame.rowconfigure(0, weight=1)
 
-        buttonFrame = tk.LabelFrame(upperFrame, text='Btn')
+        # buttonFrame = tk.LabelFrame(upperFrame, text='Btn')
+        buttonFrame = tk.Frame(upperFrame)
         buttonFrame.grid(row=0, column=0, sticky='nwe')
 
         tk.Button(buttonFrame, text="Add New Entry", command=self.addNewEntryAtEnd).grid(row=0, column=0, sticky='nw')
         tk.Button(buttonFrame, text='Remove Selected', command=self.removeSelectedEntry).grid(row=0, column=1,
                                                                                               sticky='nw')
 
-        lowerFrame = tk.LabelFrame(self, text='lower')
+        # lowerFrame = tk.LabelFrame(self, text='lower')
+        lowerFrame = tk.Frame(self)
         lowerFrame.grid(row=1, column=0, sticky='nesw')
 
         lowerFrame.columnconfigure(1, weight=1)
         lowerFrame.rowconfigure(0, weight=1)
 
         # Tree Frame
-        treeFrame = tk.LabelFrame(lowerFrame, text='')
+        # treeFrame = tk.LabelFrame(lowerFrame, text='')
+        treeFrame = tk.Frame(lowerFrame)
         treeFrame.grid(row=0, column=0, sticky='nesw')
 
         treeFrame.rowconfigure(0, weight=1)
@@ -363,8 +372,16 @@ class CaptainsLog(tk.LabelFrame):
         self.entryNameVar.trace_add('write', self.modifiedName)
 
         self.textArea = tk.Text(textFrame)
+        # TODO uncomment
+        # self.textArea['state'] = 'disabled'
         self.textArea.grid(row=1, column=0, sticky='nesw')
-        self.textArea.bind('<<Modified>>', lambda e: self.modifiedText())
+        #self.textArea.bind('<<Modified>>', lambda e: self.modifiedText())
+
+        self.textArea.tag_configure(HL_TAG, font='Arial 12 bold')
+
+        # self.textArea.bind('<Key>', self.modifiedText)
+        self.root.bind('<Any-KeyRelease>', func=self.modifiedText, add=True)
+        self.textArea.bind('<Control-KeyRelease-BackSpace->', lambda e: self.deleteWord(), add=False)
 
         textScroll = tk.Scrollbar(textFrame, orient=tk.VERTICAL, command=self.textArea.yview)
         self.textArea.configure(yscrollcommand=textScroll.set)
@@ -386,7 +403,6 @@ class CaptainsLog(tk.LabelFrame):
 
         if startingFile is not None:
             self.loadLogFile(startingFile)
-
 
     @destructive
     def closeWindow(self):
@@ -440,7 +456,6 @@ class CaptainsLog(tk.LabelFrame):
         self.needToSave = False
 
         self.resetEntryFields()
-
 
     def resetEntryFields(self):
         init = self.ignoreTrace
@@ -514,6 +529,7 @@ class CaptainsLog(tk.LabelFrame):
             # TODO load formatting tags?
             self.textArea.insert('0.0', e.log)
             self.textArea.edit_modified(False)
+            self.textArea['state'] = 'normal'
 
             if s == ROOT_ID:
                 self.numSpinbox['state'] = 'disabled'
@@ -545,13 +561,29 @@ class CaptainsLog(tk.LabelFrame):
 
             self.needToSave = True
 
-    def modifiedText(self):
+    def deleteWord(self):
+        index = self.textArea.index('insert - 1c wordstart')
+        self.textArea.delete(index, 'insert')
+
+
+    def modifiedText(self, event: tk.Event):
         if self.ignoreTrace:
             return
 
+        if self.textArea['state'] == 'disabled':
+            return
+
+        # print(event)
+
+        self.update_idletasks()
+
+        self.highlighter()
+        # print(event)
+        #if event.char == '\r':
+            #self.indentNewLine()
+
         if self.curEntry is not None:
             self.needToSave = True
-
 
     def modifiedName(self, _a, _b, _c):
         if self.ignoreTrace:
@@ -580,6 +612,35 @@ class CaptainsLog(tk.LabelFrame):
             self.ignoreTrace = True
             self.entryIdxVar.set(newnum + 1)
             self.ignoreTrace = False
+
+    def highlighter(self):
+
+        self.textArea.mark_set(START, '0.0')
+        self.textArea.mark_set(END, '0.0')
+        self.textArea.mark_set(LIMIT, 'end')
+
+        sizeVar = tk.IntVar()
+        while True:
+            index = self.textArea.search('#', END, LIMIT, count=sizeVar, regexp=False)
+
+            if len(index) == 0 or sizeVar.get() == 0:
+                break
+
+            line, _ = index.split('.')
+            line = int(line)
+
+            self.textArea.mark_set(START, index)
+            self.textArea.mark_set(END, f'{line}.0 lineend')
+
+            self.textArea.tag_add(HL_TAG, START, END)
+
+    def indentNewLine(self):
+        newline = self.textArea.index('insert linestart')
+        prevline = self.textArea.index(f'{newline} - 1l')
+
+        print(newline)
+        print(prevline)
+
 
 
 def main():
