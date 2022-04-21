@@ -1,1 +1,2 @@
-start "" D:\Home\BrainDeadDev\Python\CaptainsLog\captainsLog.pyw %1
+cd [YourPathToRepoHere]
+py captainsLog.pyw %1

@@ -1,4 +1,3 @@
-import configparser
 import json
 import os.path
 import re
@@ -80,8 +79,16 @@ class Entry:
         e.parent = self
 
     def unlink(self):
-        self.prevEntry.nextEntry = self.nextEntry
-        self.nextEntry.prevEntry = self.prevEntry
+        if self.prevEntry is not None:
+            self.prevEntry.nextEntry = self.nextEntry
+        else:
+            self.parent.childRoot = self.nextEntry
+
+        if self.nextEntry is not None:
+            self.nextEntry.prevEntry = self.prevEntry
+        else:
+            self.parent.childEnd = self.prevEntry
+
         self.parent.numChildren -= 1
 
         cur = self.nextEntry
@@ -150,6 +157,7 @@ class Entry:
     def __str__(self):
         return f'ID:{self.logID} #{self.idx} {self.name}'
 
+TREE_T = 'tree'
 
 class TreeManager:
     def __init__(self, tree: ttk.Treeview, root: Entry):
@@ -174,7 +182,7 @@ class TreeManager:
     def insertNode(self, parent: str, e: Entry, select=False):
         # print(f'P: {parent}, E:{e}')
 
-        x = self.tree.insert(parent, 'end', e.getMangle(), text=e.name, values=[0])
+        x = self.tree.insert(parent, 'end', e.getMangle(), text=e.name, values=[0], tags=(TREE_T, ))
         self.nodes[e.getMangle()] = e
 
         if select:
@@ -296,18 +304,20 @@ class CaptainsLog(ttk.Frame):
 
         BG = getColor('BG')
         SELECT = getColor('Select')
+        FG = getColor('FG')
 
 
         style = ttk.Style()
+
         style.theme_use('clam')
 
         style.configure('CLFrame.TFrame', background=BG)
 
         style.configure('CLTree.Treeview', background=[('selected', SELECT)],
-                        foreground=BG, fieldbackground=BG)
+                        foreground=FG, fieldbackground=BG)
         style.configure('CLTree.Treeview.Heading', background=BG)
-        #style.configure('CLTree.Treeview.Item', foreground=BG)
-        style.configure('CLTree.Treeview.Cell')
+        style.configure('CLTree.Treeview.Item', background=BG, foreground=FG)
+
         #endregion
 
         # ROOT
@@ -379,6 +389,8 @@ class CaptainsLog(ttk.Frame):
 
         self.tree.bind('<<TreeviewSelect>>', lambda e: self.openSelectedEntry())
 
+        self.tree.tag_configure(TREE_T, background=BG)
+
         treeScroll = ttk.Scrollbar(treeFrame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=treeScroll.set)
         treeScroll.grid(row=0, column=1, sticky='nes')
@@ -418,12 +430,13 @@ class CaptainsLog(ttk.Frame):
 
         # ENTRY AREA
         # region
-        self.textArea = tk.Text(textFrame, wrap='word')
+        self.textArea = tk.Text(textFrame, wrap='word', font=config['Font']['Entry'],
+                                bg=BG, fg=FG)
         self.textArea['state'] = 'disabled'
         self.textArea.grid(row=1, column=0, sticky='nesw')
         # self.textArea.bind('<<Modified>>', lambda e: self.modifiedText())
 
-        self.textArea.tag_configure(HL_TAG, font='Arial 12 bold')
+        self.textArea.tag_configure(HL_TAG, font=config['Font']['EntryHeader'])
 
         self.root.bind('<KeyRelease>', func=self.modifiedText, add=True)
         self.textArea.bind('<Control-KeyRelease-BackSpace->', lambda e: self.deleteWord(), add=False)
@@ -455,6 +468,14 @@ class CaptainsLog(ttk.Frame):
     def closeWindow(self):
         self.root.destroy()
 
+    def setNeedToSave(self, v: bool):
+        if v:
+            self.root.title("Captain's Log *")
+        else:
+            self.root.title("Captain's Log")
+
+        self.needToSave = v
+
     def promptSave(self):
         ret = messagebox.askyesnocancel('Save?', 'Save Current Log?')
 
@@ -480,7 +501,7 @@ class CaptainsLog(ttk.Frame):
 
         self.treeMan = TreeManager(self.tree, Entry(filename))
 
-        self.needToSave = True
+        self.setNeedToSave(True)
 
         self.resetEntryFields()
 
@@ -510,9 +531,11 @@ class CaptainsLog(ttk.Frame):
 
         self.treeMan.select(0)
 
-        self.needToSave = False
+        self.setNeedToSave(False)
 
         self.resetEntryFields()
+
+        self.openSelectedEntry()
 
     def resetEntryFields(self):
         init = self.ignoreTrace
@@ -550,7 +573,7 @@ class CaptainsLog(ttk.Frame):
         self.textArea.edit_modified(False)
         self.update()
         self.ignoreTrace = False
-        self.needToSave = False
+        self.setNeedToSave(False)
 
     def getSel(self):
         s = self.tree.selection()
@@ -571,7 +594,7 @@ class CaptainsLog(ttk.Frame):
         elif self.treeMan is None:
             self.treeMan = TreeManager(self.tree, Entry('New Log'))
 
-        self.needToSave = True
+        self.setNeedToSave(True)
 
     def storeCurrentEntry(self):
         if self.curEntry is not None:
@@ -627,7 +650,7 @@ class CaptainsLog(ttk.Frame):
 
             self.resetEntryFields()
 
-            self.needToSave = True
+            self.setNeedToSave(True)
 
     def deleteWord(self):
         index = self.textArea.index('insert - 1c wordstart')
@@ -654,7 +677,7 @@ class CaptainsLog(ttk.Frame):
         # self.indentNewLine()
 
         if self.curEntry is not None:
-            self.needToSave = True
+            self.setNeedToSave(True)
 
     def modifiedName(self, _a, _b, _c):
         if self.ignoreTrace:
@@ -663,7 +686,7 @@ class CaptainsLog(ttk.Frame):
         s = self.getSel()
         if s is not None:
             self.treeMan.setName(s, self.entryNameVar.get())
-            self.needToSave = True
+            self.setNeedToSave(True)
 
     def modifiedNum(self, _a, _b, _c):
         if self.ignoreTrace:
@@ -683,6 +706,7 @@ class CaptainsLog(ttk.Frame):
             self.ignoreTrace = True
             self.entryIdxVar.set(newnum + 1)
             self.ignoreTrace = False
+            self.setNeedToSave(True)
 
     def highlighter(self):
 
